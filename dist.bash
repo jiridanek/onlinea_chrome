@@ -15,3 +15,4 @@ cp build/web/*.js dist/
 cp build/web/manifest.json dist/
 mkdir -p dist/packages/chrome/
 install packages/chrome/bootstrap.js dist/packages/chrome/
+install packages/is/xpath.js dist/packages/is/

@@ -1,171 +1,61 @@
 import 'dart:async' as async;
 import 'dart:js' as js;
 import 'package:chrome/chrome_ext.dart' as chrome;
-import 'online_a_discussion_points.dart' as df;
 import 'dart:convert' as convert;
+import 'dart:math' as math;
 
 import 'analytics.dart' as analytics;
 
 final convert_HtmlEscape = new convert.HtmlEscape();
 
-class Progress {
-  String _url;
-  num _thread = 0;
-  num _post = 0;
-  num _markedPost = 0;
-  String _errorMsg;
-  get thread_ => _thread;
-  get post_ => _post;
-  get markedPost_ => _markedPost;
-  get errorMsg => _errorMsg;
-  thread() => _thread++;
-  post() => _post++;
-  markedPost() => _markedPost++;
-  failed(msg) {
-    _errorMsg = msg;
-    analytics.sendEvent(
-       category: 'background'
-      ,action: 'processingFailed'
-      ,label: convert.JSON.encode(
-        {"page": _url, "error": _errorMsg}
-       )
-    );
-  }
-  succeeded() {
-    _errorMsg = '';
-    analytics.sendEvent(
-              category: 'background'
-            , action: 'processingSuccesfull'
-            , label: convert.JSON.encode({"page": _url})
-            );
-  }
-  get progress {
-    return {'thread': thread_
-      , 'post': post_
-      , 'markedPost': markedPost_
-      , 'errorMsg': _errorMsg};
-  }
-  Progress(this._url);
-}
-
-class Test {
-  String a;
-}
-
-class Request { 
-  chrome.Port port;
-  async.Timer timer;
-  String url;
-  String id;
-  var progress;
-  Request(this.id, this.url) {
-    
-  }
-  
-  
-}
-
 class App {
-  Map requests = new Map<String, dynamic>();
-  chrome.Port lastPort;
-  async.Timer lastTimer;
-  onMessage(message, s) {
-    try { // otherwise chrome.dart eats exceptions
-    //print('message: $message');
-    //print('message.runtimeType: ${message.runtimeType}');
-    //print('s: $s');
-    //print('s.runtimeType: ${s.runtimeType}');
-    Map messageMap = convert.JSON.decode(message);
-    var id = messageMap['id'];
-    var url = messageMap['url'];
+  Map requests = new Map<int, String>();
+  
+  App.run() {
+    chrome.windows.onRemoved.listen((int id) => requests.remove(id));
     
-    var progress = requestProcessing(id, url);
-    cancelLastTimer();
-    lastTimer = new async.Timer.periodic(new Duration(milliseconds: 120), (_) {
-      postMessage(new js.JsObject.jsify(progress.progress));
-      if (progress.errorMsg != null) {
-        lastTimer.cancel();
-        if (lastPort != null) {
-          disconnect();
-          lastPort = null;
-        }
+    chrome.pageAction.onClicked.listen((chrome.Tab tab) {
+      var url = tab.url;
+      var window;
+      if (requests.containsValue(url)) {
+        int id;
+        requests.forEach((k, v) {
+          if (v == url) {
+            id = k;
+          }
+        });
+        chrome.windows.update(id, new chrome.WindowsUpdateParams(focused: true));
+        //TODO: ? window = chrome.windows.get(id);
+      } else {
+        int width = 300;
+        int left = math.max(10, tab.width - width - 100);
+        window = openNewWindow(url, left: left, width: width);
       }
-    
+      print("line 34");
+      if (window != null) {
+        window.then((chrome.Window window) {
+          print("got window");
+          // send the url to the popup
+              new async.Timer(new Duration(seconds: 1), (){
+          chrome.tabs.sendMessage(window.tabs.first.id, url);
+              });
+        });
+      }
     });
-    } catch(e) {
-            print(e);
-            throw('halt');
-            }
-  }
-  cancelLastTimer() {
-    if (lastTimer != null && lastTimer.isActive) {
-          lastTimer.cancel();
-        }
-  }
-  disconnect() {
-    cancelLastTimer();
-    lastPort.disconnect.apply([], thisArg: lastPort.jsProxy);
-  }
-  onDisconnect(s) {
-    cancelLastTimer();
-    lastPort = null;
-  }
-  postMessage(msg) {
-    if (lastPort == null) {
-      return null;
-    }
-    js.JsFunction postMessage = lastPort.postMessage;
-    return postMessage.apply([msg], thisArg: lastPort.jsProxy);
-  }
-  requestProcessing(num id, String url) {
-    if(requests.containsKey(url)) {
-      if(requests[url].errorMsg != null) {
-        var progress = requests[url];
-        requests.remove(url);
-        return progress;
-      }
-      reportResuming(url);
-    } else {
-      reportProcessing(url);
-      requests[url] = startProcessing(url);
-    }
-    return requests[url];
-  }
-  reportProcessing(url) {
-    analytics.sendEvent(
-      category: 'background'
-    , action: 'process'
-    , label: convert.JSON.encode({"page": url})
-    );
-  }
-  reportResuming(url) {
-      analytics.sendEvent(
-        category: 'background'
-      , action: 'resume'
-      , label: convert.JSON.encode({"page": url})
-      );
-    }
-  startProcessing(url) {
-    var progress = new Progress(url);
-    df.markAllUngraded(url, progress);
-    return progress;
-  }
-  sendProgress(url) {
-    
-  }
-  cancelProcessing() {
     
   }
   
-  initialize() {
-    chrome.runtime.onConnect.listen((p) {
-      //print('p: $p');
-      //print('p.runtimeType: ${p.runtimeType}');
-      //print('p.sender: ${p.sender}');
-      lastPort = p;
-      p.onMessage.jsProxy.callMethod('addListener', [onMessage]);
-      p.onDisconnect.jsProxy.callMethod('addListener', [onDisconnect]);
+  async.Future<chrome.Window> openNewWindow(String url, {int left, int width}) {
+    var completer = new async.Completer();
+    //https://stackoverflow.com/questions/5186296/chrome-extension-open-new-popup-window
+    chrome.windows.create(
+        new chrome.WindowsCreateParams(url: 'popup.html', type: 'popup',
+            top: 20, left: left, width: width, height: 200, focused: true)
+    ).then((chrome.Window window) {
+        requests[window.id] = url;
+        completer.complete(window);
     });
+    return completer.future;
   }
 }
 
@@ -180,6 +70,5 @@ main() {
   
   analytics.sendPageview(nonInteraction: true);
   
-  var app = new App();
-  app.initialize();
+  new App.run();
 }
