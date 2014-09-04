@@ -1,0 +1,8 @@
+name: online_a_discussion_points
+description: A sample Chrome packaged application
+dependencies:
+  chrome: any
+  is:
+    path: ../is
+transformers:
+- chrome
